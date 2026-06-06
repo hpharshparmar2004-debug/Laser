@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Hand Laser — Cyberpunk Edition</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+    font-family: 'Courier New', monospace;
+  }
+  #container {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #video {
+    position: absolute;
+    width: 1px; height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
+  canvas { display: block; }
+  #hud {
+    position: fixed;
+    top: 12px; left: 12px;
+    color: #0ff;
+    font-size: 13px;
+    line-height: 1.8;
+    text-shadow: 0 0 8px #0ff, 0 0 20px #0ff;
+    pointer-events: none;
+    z-index: 10;
+  }
+  #status {
+    position: fixed;
+    bottom: 18px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #ff0090;
+    font-size: 14px;
+    text-shadow: 0 0 10px #ff0090;
+    pointer-events: none;
+    z-index: 10;
+    letter-spacing: 2px;
+  }
+</style>
+</head>
+<body>
+<div id="container">
+  <video id="video" playsinline autoplay muted></video>
+  <canvas id="c"></canvas>
+</div>
+<div id="hud">
+  <div>FPS: <span id="fps">--</span></div>
+  <div>HANDS: <span id="hands">0</span></div>
+  <div>PARTICLES: <span id="parts">0</span></div>
+</div>
+<div id="status" id="status">INITIALIZING NEURAL LINK...</div>
+
+<!-- p5.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
+<!-- MediaPipe -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+<script>
+// ─── globals shared between p5 and mediapipe ─────────────────────
+let latestResults = null;
+let statusEl = document.getElementById('status');
+let fpsEl = document.getElementById('fps');
+let handsEl = document.getElementById('hands');
+let partsEl = document.getElementById('parts');
+
+// Fingertip landmark indices (MediaPipe)
+const FINGERTIPS = [4, 8, 12, 16, 20];
+const FINGER_NAMES = ['THUMB','INDEX','MIDDLE','RING','PINKY'];
+
+// Neon colour palettes per finger
+const FINGER_COLORS = [
+  [255, 50,  255],  // thumb   — magenta
+  [0,   255, 255],  // index   — cyan
+  [0,   255, 80],   // middle  — green
+  [255, 200, 0],    // ring    — gold
+  [255, 80,  0],    // pinky   — orange
+];
+
+// ─── particle system ─────────────────────────────────────────────
+let particles = [];
+
+class Particle {
+  constructor(x, y, col, vx, vy, isExplosion = false) {
+    this.x = x; this.y = y;
+    this.col = col;
+    this.vx = vx + (Math.random() - 0.5) * (isExplosion ? 14 : 3);
+    this.vy = vy + (Math.random() - 0.5) * (isExplosion ? 14 : 3);
+    this.life = isExplosion ? 255 : 200 + Math.random() * 80;
+    this.maxLife = this.life;
+    this.size = isExplosion ? (Math.random() * 8 + 3) : (Math.random() * 4 + 1);
+    this.isExplosion = isExplosion;
+    this.gravity = isExplosion ? 0.25 : 0;
+  }
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.vy += this.gravity;
+    this.vx *= 0.96;
+    this.vy *= 0.96;
+    this.life -= this.isExplosion ? 4 : 2.5;
+    this.size *= 0.985;
+  }
+  isDead() { return this.life <= 0 || this.size < 0.2; }
+}
+
+function spawnTrail(x, y, col, vx, vy) {
+  if (particles.length < 3000) {
+    particles.push(new Particle(x, y, col, vx * 0.3, vy * 0.3));
+  }
+}
+
+function spawnExplosion(x, y, col) {
+  const count = 60 + Math.floor(Math.random() * 40);
+  for (let i = 0; i < count; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 2 + Math.random() * 10;
+    particles.push(new Particle(x, y, col,
+      Math.cos(angle) * speed, Math.sin(angle) * speed, true));
+  }
+}
+
+// ─── touch / proximity history for explosion trigger ─────────────
+let prevTips = {}; // key → {x,y}
+let touchCooldown = {};
+const TOUCH_DIST = 40;
+const LASER_DIST = 180;
+
+// ─── p5 sketch ───────────────────────────────────────────────────
+new p5(function(p) {
+
+  let bg;         // off-screen background layer
+  let cW, cH;
+  let lastTime = performance.now();
+  let frameCount2 = 0;
+  let fps = 0;
+
+  // Scrolling grid lines
+  let gridOffset = 0;
+
+  p.setup = function() {
+    let cnv = p.createCanvas(window.innerWidth, window.innerHeight, p.WEBGL);
+    cnv.id('c');
+    // Remove the default canvas inserted by p5 at body, move to container
+    document.getElementById('container').appendChild(cnv.elt);
+    document.querySelectorAll('canvas').forEach(c => {
+      if (c.id !== 'c') c.remove();
+    });
+    cW = p.width; cH = p.height;
+    p.colorMode(p.RGB, 255, 255, 255, 255);
+    p.setAttributes('antialias', true);
+  };
+
+  p.windowResized = function() {
+    p.resizeCanvas(window.innerWidth, window.innerHeight);
+    cW = p.width; cH = p.height;
+  };
+
+  // Utility: mirror x (webcam is mirrored)
+  function mx(nx) { return (1 - nx) * cW - cW / 2; }
+  function my(ny) { return ny * cH - cH / 2; }
+
+  // Draw neon cyberpunk background
+  function drawBackground() {
+    gridOffset = (gridOffset + 1) % 80;
+
+    // Deep space gradient
+    p.noStroke();
+    for (let i = 0; i < cH; i += 4) {
+      const t = i / cH;
+      const r = p.lerp(0, 5, t);
+      const g = p.lerp(0, 0, t);
+      const b = p.lerp(20, 8, t);
+      p.fill(r, g, b);
+      p.rect(-cW / 2, i - cH / 2, cW, 4);
+    }
+
+    // Perspective grid — floor
+    p.stroke(0, 255, 255, 18);
+    p.strokeWeight(1);
+    const gridSpacing = 80;
+    const vanishY = -cH * 0.05;
+    // Vertical lines
+    for (let x = -cW; x < cW; x += gridSpacing) {
+      p.line(x, vanishY, (x) * 2.5, cH / 2);
+    }
+    // Horizontal lines
+    for (let y = 0; y < cH / 2; y += gridSpacing * 0.35 + gridOffset * 0.01) {
+      const ty = vanishY + y;
+      const span = p.map(y, 0, cH / 2, 0, cW * 2);
+      p.stroke(0, 255, 255, p.map(y, 0, cH / 2, 5, 22));
+      p.line(-span / 2, ty, span / 2, ty);
+    }
+
+    // Scanlines overlay
+    p.stroke(0, 0, 0, 18);
+    p.strokeWeight(1);
+    for (let y = -cH / 2; y < cH / 2; y += 3) {
+      p.line(-cW / 2, y, cW / 2, y);
+    }
+
+    // Glowing horizon line
+    p.strokeWeight(2);
+    p.stroke(255, 0, 140, 180);
+    p.line(-cW / 2, vanishY, cW / 2, vanishY);
+    p.strokeWeight(1);
+    p.stroke(255, 0, 140, 60);
+    p.line(-cW / 2, vanishY + 3, cW / 2, vanishY + 3);
+    p.line(-cW / 2, vanishY - 3, cW / 2, vanishY - 3);
+
+    // Random neon flicker dots (stars)
+    p.noStroke();
+    for (let i = 0; i < 60; i++) {
+      const sx = (((i * 137.5) % cW) - cW / 2);
+      const sy = (((i * 97.3) % (cH * 0.55)) - cH / 2);
+      const flicker = Math.random() > 0.97 ? 255 : 80 + Math.sin(p.frameCount * 0.05 + i) * 60;
+      const col = i % 3 === 0 ? [0,255,255] : i % 3 === 1 ? [255,0,140] : [180,0,255];
+      p.fill(col[0], col[1], col[2], flicker);
+      p.circle(sx, sy, 2);
+    }
+  }
+
+  // Draw glow effect around a stroke
+  function glowLine(x1, y1, x2, y2, r, g, b, baseAlpha, thickness) {
+    // Outer glow layers
+    for (let layer = 4; layer >= 0; layer--) {
+      const alpha = baseAlpha * (layer === 0 ? 1 : 0.15 / layer);
+      const sw = thickness + layer * 4;
+      p.stroke(r, g, b, alpha * 255);
+      p.strokeWeight(sw);
+      p.line(x1, y1, x2, y2);
+    }
+  }
+
+  function glowCircle(x, y, d, r, g, b, alpha) {
+    for (let layer = 3; layer >= 0; layer--) {
+      const a = alpha * (layer === 0 ? 1 : 0.2 / layer);
+      const diam = d + layer * 10;
+      p.stroke(r, g, b, a * 255);
+      p.strokeWeight(layer === 0 ? 2 : 1);
+      p.noFill();
+      p.circle(x, y, diam);
+    }
+    p.fill(r, g, b, alpha * 180);
+    p.noStroke();
+    p.circle(x, y, d * 0.4);
+  }
+
+  // Draw particles
+  function drawParticles() {
+    p.noStroke();
+    for (let i = particles.length - 1; i >= 0; i--) {
+      const pt = particles[i];
+      pt.update();
+      if (pt.isDead()) { particles.splice(i, 1); continue; }
+      const a = (pt.life / pt.maxLife) * 255;
+      const [r, g, b] = pt.col;
+      p.fill(r, g, b, a);
+      // Glow: draw a larger transparent circle behind
+      p.fill(r, g, b, a * 0.3);
+      p.circle(pt.x - cW / 2, pt.y - cH / 2, pt.size * 3.5);
+      p.fill(r, g, b, a);
+      p.circle(pt.x - cW / 2, pt.y - cH / 2, pt.size);
+    }
+  }
+
+  p.draw = function() {
+    // FPS
+    frameCount2++;
+    const now = performance.now();
+    if (now - lastTime >= 500) {
+      fps = Math.round(frameCount2 / ((now - lastTime) / 1000));
+      frameCount2 = 0; lastTime = now;
+      fpsEl.textContent = fps;
+      partsEl.textContent = particles.length;
+    }
+
+    // Clear
+    p.background(0);
+    drawBackground();
+
+    // Process hand landmarks
+    let handCount = 0;
+    let currentTips = {};
+
+    if (latestResults && latestResults.multiHandLandmarks) {
+      const handsData = latestResults.multiHandLandmarks;
+      handCount = handsData.length;
+
+      // Collect all tips across all hands
+      let allTips = []; // {x, y, col, id}
+
+      handsData.forEach((lm, hi) => {
+        FINGERTIPS.forEach((tipIdx, fi) => {
+          const lp = lm[tipIdx];
+          const x = mx(lp.x);
+          const y = my(lp.y);
+          const col = FINGER_COLORS[fi];
+          const id = `h${hi}f${fi}`;
+          allTips.push({ x, y, col, id });
+          currentTips[id] = { x: lp.x * cW, y: lp.y * cH };
+
+          // Spawn trail particles
+          if (prevTips[id]) {
+            const dx = (lp.x * cW) - prevTips[id].x;
+            const dy = (lp.y * cH) - prevTips[id].y;
+            if (Math.abs(dx) + Math.abs(dy) > 1.5) {
+              spawnTrail(lp.x * cW, lp.y * cH, col, dx, dy);
+            }
+          }
+
+          // Draw finger chain (knuckles)
+          const chainIdx = [
+            [0, 1, 2, 3, 4],
+            [0, 5, 6, 7, 8],
+            [0, 9, 10, 11, 12],
+            [0, 13, 14, 15, 16],
+            [0, 17, 18, 19, 20],
+          ];
+          p.noFill();
+          chainIdx[fi].forEach((ci, i) => {
+            if (i < chainIdx[fi].length - 1) {
+              const a = lm[chainIdx[fi][i]];
+              const b2 = lm[chainIdx[fi][i + 1]];
+              const ax = mx(a.x), ay = my(a.y);
+              const bx = mx(b2.x), by = my(b2.y);
+              p.stroke(col[0], col[1], col[2], 80);
+              p.strokeWeight(1.5);
+              p.line(ax, ay, bx, by);
+            }
+          });
+
+          // Draw glow at fingertip
+          glowCircle(x, y, 18, col[0], col[1], col[2], 0.9);
+        });
+      });
+
+      // Laser connections between ALL tips within range
+      for (let i = 0; i < allTips.length; i++) {
+        for (let j = i + 1; j < allTips.length; j++) {
+          const a = allTips[i], b = allTips[j];
+          const dist = Math.hypot(a.x - b.x, a.y - b.y);
+
+          if (dist < LASER_DIST) {
+            const strength = 1 - dist / LASER_DIST;
+            // Blend colors
+            const r = Math.round(a.col[0] * 0.5 + b.col[0] * 0.5);
+            const g2 = Math.round(a.col[1] * 0.5 + b.col[1] * 0.5);
+            const b2 = Math.round(a.col[2] * 0.5 + b.col[2] * 0.5);
+
+            glowLine(a.x, a.y, b.x, b.y, r, g2, b2, strength * 0.85, 1.5 + strength * 2);
+
+            // Electric arc flicker
+            if (Math.random() > 0.6) {
+              const mx2 = (a.x + b.x) / 2 + (Math.random() - 0.5) * 30 * strength;
+              const my2 = (a.y + b.y) / 2 + (Math.random() - 0.5) * 30 * strength;
+              p.stroke(r, g2, b2, strength * 120);
+              p.strokeWeight(1);
+              p.line(a.x, a.y, mx2, my2);
+              p.line(mx2, my2, b.x, b.y);
+            }
+
+            // Explosion on contact
+            const screenDist = Math.hypot(
+              (currentTips[a.id]?.x || 0) - (currentTips[b.id]?.x || 0),
+              (currentTips[a.id]?.y || 0) - (currentTips[b.id]?.y || 0)
+            );
+            const touchKey = `${a.id}-${b.id}`;
+            if (dist < TOUCH_DIST && !touchCooldown[touchKey]) {
+              const ex = (a.x + b.x) / 2;
+              const ey = (a.y + b.y) / 2;
+              spawnExplosion(ex + cW / 2, ey + cH / 2, [r, g2, b2]);
+              touchCooldown[touchKey] = 45;
+            }
+          }
+        }
+      }
+
+      // Tick cooldowns
+      for (const k in touchCooldown) {
+        touchCooldown[k]--;
+        if (touchCooldown[k] <= 0) delete touchCooldown[k];
+      }
+    }
+
+    prevTips = { ...currentTips };
+
+    // Draw particles
+    drawParticles();
+
+    handsEl.textContent = handCount;
+  };
+});
+
+// ─── MediaPipe Hands setup ────────────────────────────────────────
+const videoEl = document.getElementById('video');
+
+const hands = new Hands({
+  locateFile: (file) =>
+    `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+
+hands.setOptions({
+  maxNumHands: 2,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.6,
+  minTrackingConfidence: 0.5,
+});
+
+hands.onResults((results) => {
+  latestResults = results;
+  const count = results.multiHandLandmarks?.length || 0;
+  if (count > 0) {
+    statusEl.textContent = count === 1
+      ? '◈ ONE HAND DETECTED ◈'
+      : '◈ DUAL HANDS LOCKED ◈';
+  } else {
+    statusEl.textContent = '◈ SCANNING FOR HANDS... ◈';
+  }
+});
+
+const camera = new Camera(videoEl, {
+  onFrame: async () => {
+    await hands.send({ image: videoEl });
+  },
+  width: 640,
+  height: 480,
+  facingMode: 'user',
+});
+
+camera.start()
+  .then(() => {
+    statusEl.textContent = '◈ SCANNING FOR HANDS... ◈';
+  })
+  .catch((err) => {
+    console.error(err);
+    statusEl.textContent = '⚠ CAMERA ACCESS DENIED';
+    statusEl.style.color = '#ff4444';
+  });
+</script>
+</body>
+</html>
