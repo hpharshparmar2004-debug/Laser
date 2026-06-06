@@ -1,18 +1,31 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Hand Laser — Cyberpunk Edition</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CAT'S CRADLE // NEURAL STRINGS</title>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --cyan: #00ffff;
+    --magenta: #ff00ff;
+    --yellow: #ffff00;
+    --bg: #050a14;
+    --panel: rgba(0,20,40,0.85);
+  }
+
   html, body {
     width: 100%; height: 100%;
-    background: #000;
+    background: var(--bg);
     overflow: hidden;
-    font-family: 'Courier New', monospace;
+    font-family: 'Share Tech Mono', monospace;
+    color: var(--cyan);
   }
-  #container {
+
+  #app {
     position: relative;
     width: 100vw;
     height: 100vh;
@@ -20,437 +33,591 @@
     align-items: center;
     justify-content: center;
   }
+
+  /* CRT scanline overlay */
+  #app::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(
+      to bottom,
+      transparent 0px,
+      transparent 2px,
+      rgba(0,0,0,0.18) 2px,
+      rgba(0,0,0,0.18) 4px
+    );
+    pointer-events: none;
+    z-index: 100;
+    mix-blend-mode: multiply;
+  }
+
+  /* Vignette */
+  #app::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,0.75) 100%);
+    pointer-events: none;
+    z-index: 99;
+  }
+
+  #canvas-container {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+
   #video {
     position: absolute;
     width: 1px; height: 1px;
-    opacity: 0;
-    pointer-events: none;
+    opacity: 0; pointer-events: none;
   }
-  canvas { display: block; }
+
+  canvas {
+    display: block;
+  }
+
+  /* HUD */
   #hud {
-    position: fixed;
-    top: 12px; left: 12px;
-    color: #0ff;
-    font-size: 13px;
-    line-height: 1.8;
-    text-shadow: 0 0 8px #0ff, 0 0 20px #0ff;
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 18px 24px;
+    z-index: 50;
     pointer-events: none;
-    z-index: 10;
   }
-  #status {
-    position: fixed;
-    bottom: 18px;
-    left: 50%;
-    transform: translateX(-50%);
-    color: #ff0090;
-    font-size: 14px;
-    text-shadow: 0 0 10px #ff0090;
+
+  #title-block {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  #title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: clamp(14px, 2vw, 22px);
+    font-weight: 900;
+    letter-spacing: 0.25em;
+    color: var(--cyan);
+    text-shadow: 0 0 12px var(--cyan), 0 0 28px var(--cyan);
+    line-height: 1;
+  }
+
+  #subtitle {
+    font-size: 10px;
+    letter-spacing: 0.3em;
+    color: rgba(0,255,255,0.45);
+    text-transform: uppercase;
+  }
+
+  #status-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    letter-spacing: 0.15em;
+    color: rgba(0,255,255,0.6);
+  }
+
+  .dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #333;
+    box-shadow: none;
+    transition: background 0.3s, box-shadow 0.3s;
+  }
+  .dot.active {
+    background: var(--cyan);
+    box-shadow: 0 0 8px var(--cyan);
+  }
+  .dot.warn { background: var(--yellow); box-shadow: 0 0 8px var(--yellow); }
+
+  #bottom-hud {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    display: flex;
+    justify-content: center;
+    padding: 14px;
+    z-index: 50;
+    pointer-events: none;
+  }
+
+  #instructions {
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    color: rgba(0,255,255,0.3);
+    text-align: center;
+  }
+
+  #loading-screen {
+    position: absolute;
+    inset: 0;
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+    z-index: 200;
+    transition: opacity 0.8s ease;
+  }
+
+  #loading-screen.hidden { opacity: 0; pointer-events: none; }
+
+  #loading-title {
+    font-family: 'Orbitron', sans-serif;
+    font-size: clamp(24px, 5vw, 48px);
+    font-weight: 900;
+    letter-spacing: 0.3em;
+    color: var(--cyan);
+    text-shadow: 0 0 20px var(--cyan), 0 0 60px var(--cyan);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  #loading-msg {
+    font-size: 12px;
+    letter-spacing: 0.25em;
+    color: rgba(0,255,255,0.5);
+    min-height: 20px;
+  }
+
+  #progress-bar {
+    width: 240px; height: 2px;
+    background: rgba(0,255,255,0.15);
+    position: relative;
+    overflow: hidden;
+  }
+  #progress-fill {
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 0%;
+    background: var(--cyan);
+    box-shadow: 0 0 10px var(--cyan);
+    transition: width 0.4s ease;
+  }
+
+  @keyframes pulse {
+    0%,100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+
+  #particle-canvas {
+    position: absolute;
+    inset: 0;
     pointer-events: none;
     z-index: 10;
-    letter-spacing: 2px;
   }
 </style>
 </head>
 <body>
-<div id="container">
-  <video id="video" playsinline autoplay muted></video>
-  <canvas id="c"></canvas>
-</div>
-<div id="hud">
-  <div>FPS: <span id="fps">--</span></div>
-  <div>HANDS: <span id="hands">0</span></div>
-  <div>PARTICLES: <span id="parts">0</span></div>
-</div>
-<div id="status" id="status">INITIALIZING NEURAL LINK...</div>
+<div id="app">
+  <div id="loading-screen">
+    <div id="loading-title">CAT'S CRADLE</div>
+    <div id="loading-msg">INITIALIZING NEURAL TRACKING...</div>
+    <div id="progress-bar"><div id="progress-fill"></div></div>
+  </div>
 
-<!-- p5.js -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
-<!-- MediaPipe -->
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-<script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+  <div id="canvas-container">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="main-canvas"></canvas>
+    <canvas id="particle-canvas"></canvas>
+  </div>
+
+  <div id="hud">
+    <div id="title-block">
+      <div id="title">CAT'S CRADLE</div>
+      <div id="subtitle">Neural String Interface v2.1</div>
+    </div>
+    <div id="status-panel">
+      <div class="status-row">
+        <span>CAMERA</span><span class="dot" id="dot-cam"></span>
+      </div>
+      <div class="status-row">
+        <span>LEFT HAND</span><span class="dot" id="dot-left"></span>
+      </div>
+      <div class="status-row">
+        <span>RIGHT HAND</span><span class="dot" id="dot-right"></span>
+      </div>
+      <div class="status-row">
+        <span>STRINGS</span><span class="dot" id="dot-strings"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="bottom-hud">
+    <div id="instructions">RAISE BOTH HANDS TO ACTIVATE STRINGS &nbsp;|&nbsp; BRING FINGERTIPS TOGETHER FOR FUSION EVENT</div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
 
 <script>
-// ─── globals shared between p5 and mediapipe ─────────────────────
-let latestResults = null;
-let statusEl = document.getElementById('status');
-let fpsEl = document.getElementById('fps');
-let handsEl = document.getElementById('hands');
-let partsEl = document.getElementById('parts');
+// ─── State ────────────────────────────────────────────────────────────────
+const state = {
+  hands: { left: null, right: null },
+  prevHands: { left: null, right: null },
+  particles: [],
+  stringHistory: [], // for trail blur
+  frame: 0,
+};
 
-// Fingertip landmark indices (MediaPipe)
-const FINGERTIPS = [4, 8, 12, 16, 20];
-const FINGER_NAMES = ['THUMB','INDEX','MIDDLE','RING','PINKY'];
+// ─── Canvas Setup ────────────────────────────────────────────────────────
+const mainCanvas = document.getElementById('main-canvas');
+const ctx = mainCanvas.getContext('2d');
+const pCanvas = document.getElementById('particle-canvas');
+const pCtx = pCanvas.getContext('2d');
+const video = document.getElementById('video');
 
-// Neon colour palettes per finger
-const FINGER_COLORS = [
-  [255, 50,  255],  // thumb   — magenta
-  [0,   255, 255],  // index   — cyan
-  [0,   255, 80],   // middle  — green
-  [255, 200, 0],    // ring    — gold
-  [255, 80,  0],    // pinky   — orange
+function resize() {
+  const W = window.innerWidth, H = window.innerHeight;
+  mainCanvas.width = pCanvas.width = W;
+  mainCanvas.height = pCanvas.height = H;
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ─── Status Dots ─────────────────────────────────────────────────────────
+function setDot(id, state) {
+  const el = document.getElementById(id);
+  el.className = 'dot' + (state ? ' ' + state : '');
+}
+
+// ─── Progress ────────────────────────────────────────────────────────────
+const progressFill = document.getElementById('progress-fill');
+const loadingMsg = document.getElementById('loading-msg');
+const loadingScreen = document.getElementById('loading-screen');
+
+function setProgress(pct, msg) {
+  progressFill.style.width = pct + '%';
+  if (msg) loadingMsg.textContent = msg;
+}
+
+// ─── Fingertip landmark indices ──────────────────────────────────────────
+const FINGERTIPS = [4, 8, 12, 16, 20]; // thumb, index, middle, ring, pinky
+const ALL_LANDMARKS = Array.from({length: 21}, (_, i) => i);
+
+// ─── Color helpers ───────────────────────────────────────────────────────
+function lerpColor(c1, c2, t) {
+  const r1=parseInt(c1.slice(1,3),16), g1=parseInt(c1.slice(3,5),16), b1=parseInt(c1.slice(5,7),16);
+  const r2=parseInt(c2.slice(1,3),16), g2=parseInt(c2.slice(3,5),16), b2=parseInt(c2.slice(5,7),16);
+  const r=Math.round(r1+(r2-r1)*t), g=Math.round(g1+(g2-g1)*t), b=Math.round(b1+(b2-b1)*t);
+  return `rgb(${r},${g},${b})`;
+}
+
+function stringColor(dist, maxDist) {
+  // cyan → magenta → yellow as hands spread
+  const t = Math.min(dist / maxDist, 1);
+  if (t < 0.5) return lerpColor('#00ffff', '#ff00ff', t * 2);
+  return lerpColor('#ff00ff', '#ffff00', (t - 0.5) * 2);
+}
+
+// ─── Hand landmark → canvas coords ───────────────────────────────────────
+function lmToCanvas(lm) {
+  const W = mainCanvas.width, H = mainCanvas.height;
+  // mirrored: flip x
+  return { x: (1 - lm.x) * W, y: lm.y * H };
+}
+
+// ─── Glow line ───────────────────────────────────────────────────────────
+function glowLine(ctx, x1, y1, x2, y2, color, thickness, glowSize, alpha=1) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = glowSize;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = glowSize * 3;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  // bright core
+  ctx.globalAlpha = alpha * 0.9;
+  ctx.lineWidth = thickness;
+  ctx.shadowBlur = glowSize;
+  ctx.strokeStyle = '#ffffff';
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ─── Glow dot ────────────────────────────────────────────────────────────
+function glowDot(ctx, x, y, r, color, alpha=1) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = r * 4;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  // white core
+  ctx.shadowBlur = r * 2;
+  ctx.fillStyle = `rgba(255,255,255,0.9)`;
+  ctx.beginPath();
+  ctx.arc(x, y, r * 0.45, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// ─── Particles ───────────────────────────────────────────────────────────
+const COLORS = ['#00ffff','#ff00ff','#ffff00','#ffffff','#80ffff'];
+
+function spawnParticles(x, y, n=30) {
+  for (let i = 0; i < n; i++) {
+    const angle = Math.random() * Math.PI * 2;
+    const speed = 1.5 + Math.random() * 5;
+    const color = COLORS[Math.floor(Math.random() * COLORS.length)];
+    state.particles.push({
+      x, y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1.0,
+      decay: 0.025 + Math.random() * 0.04,
+      r: 1.5 + Math.random() * 3,
+      color,
+    });
+  }
+}
+
+function updateParticles() {
+  pCtx.clearRect(0, 0, pCanvas.width, pCanvas.height);
+  state.particles = state.particles.filter(p => p.life > 0);
+  for (const p of state.particles) {
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vx *= 0.95;
+    p.vy *= 0.95;
+    p.life -= p.decay;
+    glowDot(pCtx, p.x, p.y, p.r, p.color, Math.max(0, p.life));
+  }
+}
+
+// ─── Hand silhouette ─────────────────────────────────────────────────────
+const CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],
+  [13,17],[17,18],[18,19],[19,20],
+  [0,17]
 ];
 
-// ─── particle system ─────────────────────────────────────────────
-let particles = [];
+function drawHand(lms, color) {
+  const pts = lms.map(lmToCanvas);
 
-class Particle {
-  constructor(x, y, col, vx, vy, isExplosion = false) {
-    this.x = x; this.y = y;
-    this.col = col;
-    this.vx = vx + (Math.random() - 0.5) * (isExplosion ? 14 : 3);
-    this.vy = vy + (Math.random() - 0.5) * (isExplosion ? 14 : 3);
-    this.life = isExplosion ? 255 : 200 + Math.random() * 80;
-    this.maxLife = this.life;
-    this.size = isExplosion ? (Math.random() * 8 + 3) : (Math.random() * 4 + 1);
-    this.isExplosion = isExplosion;
-    this.gravity = isExplosion ? 0.25 : 0;
+  // Skeleton
+  for (const [a, b] of CONNECTIONS) {
+    const p1 = pts[a], p2 = pts[b];
+    glowLine(ctx, p1.x, p1.y, p2.x, p2.y, color, 1.5, 4, 0.55);
   }
-  update() {
-    this.x += this.vx;
-    this.y += this.vy;
-    this.vy += this.gravity;
-    this.vx *= 0.96;
-    this.vy *= 0.96;
-    this.life -= this.isExplosion ? 4 : 2.5;
-    this.size *= 0.985;
-  }
-  isDead() { return this.life <= 0 || this.size < 0.2; }
-}
 
-function spawnTrail(x, y, col, vx, vy) {
-  if (particles.length < 3000) {
-    particles.push(new Particle(x, y, col, vx * 0.3, vy * 0.3));
+  // Landmarks
+  for (let i = 0; i < pts.length; i++) {
+    const isTip = FINGERTIPS.includes(i);
+    const r = isTip ? 5 : 3;
+    const c = isTip ? '#ffffff' : color;
+    glowDot(ctx, pts[i].x, pts[i].y, r, c, isTip ? 0.95 : 0.65);
   }
 }
 
-function spawnExplosion(x, y, col) {
-  const count = 60 + Math.floor(Math.random() * 40);
-  for (let i = 0; i < count; i++) {
-    const angle = Math.random() * Math.PI * 2;
-    const speed = 2 + Math.random() * 10;
-    particles.push(new Particle(x, y, col,
-      Math.cos(angle) * speed, Math.sin(angle) * speed, true));
-  }
-}
+// ─── Elastic string drawing ───────────────────────────────────────────────
+function drawStrings(leftLms, rightLms) {
+  const lPts = leftLms.map(lmToCanvas);
+  const rPts = rightLms.map(lmToCanvas);
 
-// ─── touch / proximity history for explosion trigger ─────────────
-let prevTips = {}; // key → {x,y}
-let touchCooldown = {};
-const TOUCH_DIST = 40;
-const LASER_DIST = 180;
+  // Wrist-to-wrist distance for scaling
+  const wristDist = Math.hypot(lPts[0].x - rPts[0].x, lPts[0].y - rPts[0].y);
+  const maxDist = mainCanvas.width * 0.8;
+  const t = Math.min(wristDist / maxDist, 1);
+  const thickness = Math.max(1.5, 6 - t * 4);
 
-// ─── p5 sketch ───────────────────────────────────────────────────
-new p5(function(p) {
+  setDot('dot-strings', 'active');
 
-  let bg;         // off-screen background layer
-  let cW, cH;
-  let lastTime = performance.now();
-  let frameCount2 = 0;
-  let fps = 0;
+  const touchThreshold = 28;
+  let anyTouch = false;
 
-  // Scrolling grid lines
-  let gridOffset = 0;
+  for (let fi = 0; fi < FINGERTIPS.length; fi++) {
+    const li = FINGERTIPS[fi];
+    const lp = lPts[li];
+    const rp = rPts[li];
 
-  p.setup = function() {
-    let cnv = p.createCanvas(window.innerWidth, window.innerHeight, p.WEBGL);
-    cnv.id('c');
-    // Remove the default canvas inserted by p5 at body, move to container
-    document.getElementById('container').appendChild(cnv.elt);
-    document.querySelectorAll('canvas').forEach(c => {
-      if (c.id !== 'c') c.remove();
-    });
-    cW = p.width; cH = p.height;
-    p.colorMode(p.RGB, 255, 255, 255, 255);
-    p.setAttributes('antialias', true);
-  };
+    const dist = Math.hypot(lp.x - rp.x, lp.y - rp.y);
+    const color = stringColor(dist, maxDist);
 
-  p.windowResized = function() {
-    p.resizeCanvas(window.innerWidth, window.innerHeight);
-    cW = p.width; cH = p.height;
-  };
+    // Slight elastic sag — midpoint droops based on tension
+    const sag = Math.min(40, wristDist * 0.06) * (fi % 2 === 0 ? 1 : -1);
+    const mx = (lp.x + rp.x) / 2;
+    const my = (lp.y + rp.y) / 2 + sag;
 
-  // Utility: mirror x (webcam is mirrored)
-  function mx(nx) { return (1 - nx) * cW - cW / 2; }
-  function my(ny) { return ny * cH - cH / 2; }
+    // Quadratic bezier for elastic look
+    ctx.save();
+    ctx.shadowColor = color;
+    ctx.shadowBlur = 20;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = thickness;
+    ctx.lineCap = 'round';
+    ctx.globalAlpha = 0.85;
+    ctx.beginPath();
+    ctx.moveTo(lp.x, lp.y);
+    ctx.quadraticCurveTo(mx, my, rp.x, rp.y);
+    ctx.stroke();
 
-  // Draw neon cyberpunk background
-  function drawBackground() {
-    gridOffset = (gridOffset + 1) % 80;
+    // Bright core
+    ctx.shadowBlur = 8;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(0.5, thickness * 0.3);
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath();
+    ctx.moveTo(lp.x, lp.y);
+    ctx.quadraticCurveTo(mx, my, rp.x, rp.y);
+    ctx.stroke();
+    ctx.restore();
 
-    // Deep space gradient
-    p.noStroke();
-    for (let i = 0; i < cH; i += 4) {
-      const t = i / cH;
-      const r = p.lerp(0, 5, t);
-      const g = p.lerp(0, 0, t);
-      const b = p.lerp(20, 8, t);
-      p.fill(r, g, b);
-      p.rect(-cW / 2, i - cH / 2, cW, 4);
-    }
-
-    // Perspective grid — floor
-    p.stroke(0, 255, 255, 18);
-    p.strokeWeight(1);
-    const gridSpacing = 80;
-    const vanishY = -cH * 0.05;
-    // Vertical lines
-    for (let x = -cW; x < cW; x += gridSpacing) {
-      p.line(x, vanishY, (x) * 2.5, cH / 2);
-    }
-    // Horizontal lines
-    for (let y = 0; y < cH / 2; y += gridSpacing * 0.35 + gridOffset * 0.01) {
-      const ty = vanishY + y;
-      const span = p.map(y, 0, cH / 2, 0, cW * 2);
-      p.stroke(0, 255, 255, p.map(y, 0, cH / 2, 5, 22));
-      p.line(-span / 2, ty, span / 2, ty);
-    }
-
-    // Scanlines overlay
-    p.stroke(0, 0, 0, 18);
-    p.strokeWeight(1);
-    for (let y = -cH / 2; y < cH / 2; y += 3) {
-      p.line(-cW / 2, y, cW / 2, y);
-    }
-
-    // Glowing horizon line
-    p.strokeWeight(2);
-    p.stroke(255, 0, 140, 180);
-    p.line(-cW / 2, vanishY, cW / 2, vanishY);
-    p.strokeWeight(1);
-    p.stroke(255, 0, 140, 60);
-    p.line(-cW / 2, vanishY + 3, cW / 2, vanishY + 3);
-    p.line(-cW / 2, vanishY - 3, cW / 2, vanishY - 3);
-
-    // Random neon flicker dots (stars)
-    p.noStroke();
-    for (let i = 0; i < 60; i++) {
-      const sx = (((i * 137.5) % cW) - cW / 2);
-      const sy = (((i * 97.3) % (cH * 0.55)) - cH / 2);
-      const flicker = Math.random() > 0.97 ? 255 : 80 + Math.sin(p.frameCount * 0.05 + i) * 60;
-      const col = i % 3 === 0 ? [0,255,255] : i % 3 === 1 ? [255,0,140] : [180,0,255];
-      p.fill(col[0], col[1], col[2], flicker);
-      p.circle(sx, sy, 2);
-    }
-  }
-
-  // Draw glow effect around a stroke
-  function glowLine(x1, y1, x2, y2, r, g, b, baseAlpha, thickness) {
-    // Outer glow layers
-    for (let layer = 4; layer >= 0; layer--) {
-      const alpha = baseAlpha * (layer === 0 ? 1 : 0.15 / layer);
-      const sw = thickness + layer * 4;
-      p.stroke(r, g, b, alpha * 255);
-      p.strokeWeight(sw);
-      p.line(x1, y1, x2, y2);
-    }
-  }
-
-  function glowCircle(x, y, d, r, g, b, alpha) {
-    for (let layer = 3; layer >= 0; layer--) {
-      const a = alpha * (layer === 0 ? 1 : 0.2 / layer);
-      const diam = d + layer * 10;
-      p.stroke(r, g, b, a * 255);
-      p.strokeWeight(layer === 0 ? 2 : 1);
-      p.noFill();
-      p.circle(x, y, diam);
-    }
-    p.fill(r, g, b, alpha * 180);
-    p.noStroke();
-    p.circle(x, y, d * 0.4);
-  }
-
-  // Draw particles
-  function drawParticles() {
-    p.noStroke();
-    for (let i = particles.length - 1; i >= 0; i--) {
-      const pt = particles[i];
-      pt.update();
-      if (pt.isDead()) { particles.splice(i, 1); continue; }
-      const a = (pt.life / pt.maxLife) * 255;
-      const [r, g, b] = pt.col;
-      p.fill(r, g, b, a);
-      // Glow: draw a larger transparent circle behind
-      p.fill(r, g, b, a * 0.3);
-      p.circle(pt.x - cW / 2, pt.y - cH / 2, pt.size * 3.5);
-      p.fill(r, g, b, a);
-      p.circle(pt.x - cW / 2, pt.y - cH / 2, pt.size);
-    }
-  }
-
-  p.draw = function() {
-    // FPS
-    frameCount2++;
-    const now = performance.now();
-    if (now - lastTime >= 500) {
-      fps = Math.round(frameCount2 / ((now - lastTime) / 1000));
-      frameCount2 = 0; lastTime = now;
-      fpsEl.textContent = fps;
-      partsEl.textContent = particles.length;
-    }
-
-    // Clear
-    p.background(0);
-    drawBackground();
-
-    // Process hand landmarks
-    let handCount = 0;
-    let currentTips = {};
-
-    if (latestResults && latestResults.multiHandLandmarks) {
-      const handsData = latestResults.multiHandLandmarks;
-      handCount = handsData.length;
-
-      // Collect all tips across all hands
-      let allTips = []; // {x, y, col, id}
-
-      handsData.forEach((lm, hi) => {
-        FINGERTIPS.forEach((tipIdx, fi) => {
-          const lp = lm[tipIdx];
-          const x = mx(lp.x);
-          const y = my(lp.y);
-          const col = FINGER_COLORS[fi];
-          const id = `h${hi}f${fi}`;
-          allTips.push({ x, y, col, id });
-          currentTips[id] = { x: lp.x * cW, y: lp.y * cH };
-
-          // Spawn trail particles
-          if (prevTips[id]) {
-            const dx = (lp.x * cW) - prevTips[id].x;
-            const dy = (lp.y * cH) - prevTips[id].y;
-            if (Math.abs(dx) + Math.abs(dy) > 1.5) {
-              spawnTrail(lp.x * cW, lp.y * cH, col, dx, dy);
-            }
-          }
-
-          // Draw finger chain (knuckles)
-          const chainIdx = [
-            [0, 1, 2, 3, 4],
-            [0, 5, 6, 7, 8],
-            [0, 9, 10, 11, 12],
-            [0, 13, 14, 15, 16],
-            [0, 17, 18, 19, 20],
-          ];
-          p.noFill();
-          chainIdx[fi].forEach((ci, i) => {
-            if (i < chainIdx[fi].length - 1) {
-              const a = lm[chainIdx[fi][i]];
-              const b2 = lm[chainIdx[fi][i + 1]];
-              const ax = mx(a.x), ay = my(a.y);
-              const bx = mx(b2.x), by = my(b2.y);
-              p.stroke(col[0], col[1], col[2], 80);
-              p.strokeWeight(1.5);
-              p.line(ax, ay, bx, by);
-            }
-          });
-
-          // Draw glow at fingertip
-          glowCircle(x, y, 18, col[0], col[1], col[2], 0.9);
-        });
-      });
-
-      // Laser connections between ALL tips within range
-      for (let i = 0; i < allTips.length; i++) {
-        for (let j = i + 1; j < allTips.length; j++) {
-          const a = allTips[i], b = allTips[j];
-          const dist = Math.hypot(a.x - b.x, a.y - b.y);
-
-          if (dist < LASER_DIST) {
-            const strength = 1 - dist / LASER_DIST;
-            // Blend colors
-            const r = Math.round(a.col[0] * 0.5 + b.col[0] * 0.5);
-            const g2 = Math.round(a.col[1] * 0.5 + b.col[1] * 0.5);
-            const b2 = Math.round(a.col[2] * 0.5 + b.col[2] * 0.5);
-
-            glowLine(a.x, a.y, b.x, b.y, r, g2, b2, strength * 0.85, 1.5 + strength * 2);
-
-            // Electric arc flicker
-            if (Math.random() > 0.6) {
-              const mx2 = (a.x + b.x) / 2 + (Math.random() - 0.5) * 30 * strength;
-              const my2 = (a.y + b.y) / 2 + (Math.random() - 0.5) * 30 * strength;
-              p.stroke(r, g2, b2, strength * 120);
-              p.strokeWeight(1);
-              p.line(a.x, a.y, mx2, my2);
-              p.line(mx2, my2, b.x, b.y);
-            }
-
-            // Explosion on contact
-            const screenDist = Math.hypot(
-              (currentTips[a.id]?.x || 0) - (currentTips[b.id]?.x || 0),
-              (currentTips[a.id]?.y || 0) - (currentTips[b.id]?.y || 0)
-            );
-            const touchKey = `${a.id}-${b.id}`;
-            if (dist < TOUCH_DIST && !touchCooldown[touchKey]) {
-              const ex = (a.x + b.x) / 2;
-              const ey = (a.y + b.y) / 2;
-              spawnExplosion(ex + cW / 2, ey + cH / 2, [r, g2, b2]);
-              touchCooldown[touchKey] = 45;
-            }
-          }
-        }
+    // Touch detection → particle burst
+    if (dist < touchThreshold) {
+      anyTouch = true;
+      // Throttle by checking last burst
+      if (!state._lastBurst || state.frame - state._lastBurst > 8) {
+        spawnParticles((lp.x + rp.x) / 2, (lp.y + rp.y) / 2, 22);
+        state._lastBurst = state.frame;
       }
-
-      // Tick cooldowns
-      for (const k in touchCooldown) {
-        touchCooldown[k]--;
-        if (touchCooldown[k] <= 0) delete touchCooldown[k];
-      }
+      // Touch halo
+      glowDot(ctx, (lp.x+rp.x)/2, (lp.y+rp.y)/2, 10, '#ffffff', 0.9);
     }
+  }
+}
 
-    prevTips = { ...currentTips };
+// ─── Main draw loop ───────────────────────────────────────────────────────
+function drawFrame() {
+  const W = mainCanvas.width, H = mainCanvas.height;
+  state.frame++;
 
-    // Draw particles
-    drawParticles();
+  // Deep midnight blue with slight fade (motion blur feel)
+  ctx.globalAlpha = 0.82;
+  ctx.fillStyle = '#050a14';
+  ctx.fillRect(0, 0, W, H);
+  ctx.globalAlpha = 1;
 
-    handsEl.textContent = handCount;
-  };
-});
+  // Subtle grid
+  ctx.save();
+  ctx.strokeStyle = 'rgba(0,255,255,0.04)';
+  ctx.lineWidth = 1;
+  const gs = 60;
+  for (let x = 0; x < W; x += gs) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let y = 0; y < H; y += gs) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+  ctx.restore();
 
-// ─── MediaPipe Hands setup ────────────────────────────────────────
-const videoEl = document.getElementById('video');
+  const { left, right } = state.hands;
 
-const hands = new Hands({
-  locateFile: (file) =>
-    `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
-});
+  // Draw hands
+  if (left) drawHand(left, '#00ffff');
+  if (right) drawHand(right, '#ff00ff');
 
-hands.setOptions({
-  maxNumHands: 2,
-  modelComplexity: 1,
-  minDetectionConfidence: 0.6,
-  minTrackingConfidence: 0.5,
-});
-
-hands.onResults((results) => {
-  latestResults = results;
-  const count = results.multiHandLandmarks?.length || 0;
-  if (count > 0) {
-    statusEl.textContent = count === 1
-      ? '◈ ONE HAND DETECTED ◈'
-      : '◈ DUAL HANDS LOCKED ◈';
+  // Draw strings
+  if (left && right) {
+    drawStrings(left, right);
   } else {
-    statusEl.textContent = '◈ SCANNING FOR HANDS... ◈';
+    setDot('dot-strings', '');
   }
-});
 
-const camera = new Camera(videoEl, {
-  onFrame: async () => {
-    await hands.send({ image: videoEl });
-  },
-  width: 640,
-  height: 480,
-  facingMode: 'user',
-});
+  // Status
+  setDot('dot-left', left ? 'active' : '');
+  setDot('dot-right', right ? 'active' : '');
 
-camera.start()
-  .then(() => {
-    statusEl.textContent = '◈ SCANNING FOR HANDS... ◈';
-  })
-  .catch((err) => {
-    console.error(err);
-    statusEl.textContent = '⚠ CAMERA ACCESS DENIED';
-    statusEl.style.color = '#ff4444';
+  updateParticles();
+  requestAnimationFrame(drawFrame);
+}
+
+// ─── MediaPipe Hands ─────────────────────────────────────────────────────
+async function initMediaPipe() {
+  setProgress(10, 'LOADING MEDIAPIPE...');
+
+  const hands = new Hands({
+    locateFile: file =>
+      `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
   });
+
+  setProgress(35, 'CONFIGURING MODEL...');
+
+  hands.setOptions({
+    maxNumHands: 2,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.7,
+    minTrackingConfidence: 0.6,
+  });
+
+  hands.onResults(results => {
+    state.hands.left = null;
+    state.hands.right = null;
+
+    if (results.multiHandLandmarks && results.multiHandedness) {
+      for (let i = 0; i < results.multiHandLandmarks.length; i++) {
+        const label = results.multiHandedness[i].label;
+        // MediaPipe flips: "Left" in mirror = user's right, etc.
+        if (label === 'Left') state.hands.right = results.multiHandLandmarks[i];
+        else state.hands.left = results.multiHandLandmarks[i];
+      }
+    }
+  });
+
+  setProgress(55, 'REQUESTING CAMERA...');
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 1280, height: 720, facingMode: 'user' },
+      audio: false,
+    });
+    video.srcObject = stream;
+    await video.play();
+    setDot('dot-cam', 'active');
+    setProgress(75, 'CAMERA ACTIVE...');
+  } catch (e) {
+    setDot('dot-cam', 'warn');
+    setProgress(0, 'CAMERA ERROR: ' + e.message);
+    return;
+  }
+
+  setProgress(90, 'STARTING DETECTION...');
+
+  const camera = new Camera(video, {
+    onFrame: async () => {
+      await hands.send({ image: video });
+    },
+    width: 1280,
+    height: 720,
+  });
+  await camera.start();
+
+  setProgress(100, 'NEURAL LINK ESTABLISHED');
+  setTimeout(() => {
+    loadingScreen.classList.add('hidden');
+    setTimeout(() => loadingScreen.remove(), 900);
+  }, 600);
+}
+
+// ─── Boot ─────────────────────────────────────────────────────────────────
+drawFrame();
+initMediaPipe().catch(err => {
+  loadingMsg.textContent = 'ERROR: ' + err.message;
+  console.error(err);
+});
 </script>
 </body>
 </html>
